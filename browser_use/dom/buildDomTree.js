@@ -515,7 +515,9 @@
     if (element.classList && (
       element.classList.contains('dropdown-toggle') ||
       element.getAttribute('data-toggle') === 'dropdown' ||
-      element.getAttribute('aria-haspopup') === 'true'
+      element.getAttribute('aria-haspopup') === 'true' ||
+      element.getAttribute('data-index') ||
+      element.classList.contains("button")
     )) {
       return true;
     }
