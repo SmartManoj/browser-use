@@ -293,7 +293,7 @@ class Agent(Generic[Context]):
 	def _set_tool_calling_method(self) -> Optional[ToolCallingMethod]:
 		tool_calling_method = self.settings.tool_calling_method
 		if tool_calling_method == 'auto':
-			if self.model_name == 'deepseek-reasoner' or self.model_name.startswith('deepseek-r1'):
+			if 'deepseek-reasoner' in self.model_name or 'deepseek-r1' in self.model_name:
 				return 'raw'
 			elif self.chat_model_library == 'ChatGoogleGenerativeAI':
 				return None
@@ -486,14 +486,19 @@ class Agent(Generic[Context]):
 		self.state.history.history.append(history_item)
 
 	THINK_TAGS = re.compile(r'<think>.*?</think>', re.DOTALL)
+	STRAY_CLOSE_TAG = re.compile(r'.*?</think>', re.DOTALL)
 
 	def _remove_think_tags(self, text: str) -> str:
-		"""Remove think tags from text"""
-		return re.sub(self.THINK_TAGS, '', text)
+		# Step 1: Remove well-formed <think>...</think>
+		text = re.sub(self.THINK_TAGS, '', text)
+		# Step 2: If there's an unmatched closing tag </think>,
+		#         remove everything up to and including that.
+		text = re.sub(self.STRAY_CLOSE_TAG, '', text)
+		return text.strip()
 
 	def _convert_input_messages(self, input_messages: list[BaseMessage]) -> list[BaseMessage]:
 		"""Convert input messages to the correct format"""
-		if self.model_name == 'deepseek-reasoner' or self.model_name.startswith('deepseek-r1'):
+		if self.model_name == 'deepseek-reasoner' or 'deepseek-r1' in self.model_name:
 			return convert_input_messages(input_messages, self.model_name)
 		else:
 			return input_messages
@@ -628,11 +633,7 @@ class Agent(Generic[Context]):
 				)
 			)
 
-			if not self.injected_browser_context:
-				await self.browser_context.close()
-
-			if not self.injected_browser and self.browser:
-				await self.browser.close()
+			await self.close()
 
 			if self.settings.generate_gif:
 				output_path: str = 'agent_history.gif'
@@ -941,7 +942,7 @@ class Agent(Generic[Context]):
 		response = await self.settings.planner_llm.ainvoke(planner_messages)
 		plan = str(response.content)
 		# if deepseek-reasoner, remove think tags
-		if self.planner_model_name == 'deepseek-reasoner':
+		if self.planner_model_name and ('deepseek-r1' in self.planner_model_name or 'deepseek-reasoner' in self.planner_model_name):
 			plan = self._remove_think_tags(plan)
 		try:
 			plan_json = json.loads(plan)
@@ -957,3 +958,40 @@ class Agent(Generic[Context]):
 	@property
 	def message_manager(self) -> MessageManager:
 		return self._message_manager
+
+	async def cleanup_httpx_clients(self):
+		"""Cleanup all httpx clients"""
+		import httpx
+		import gc
+
+		# Force garbage collection to make sure all clients are in memory
+		gc.collect()
+		
+		# Get all httpx clients
+		clients = [obj for obj in gc.get_objects() if isinstance(obj, httpx.AsyncClient)]
+		
+		# Close all clients
+		for client in clients:
+			if not client.is_closed:
+				try:
+					await client.aclose()
+				except Exception as e:
+					logger.debug(f"Error closing httpx client: {e}")
+
+	async def close(self):
+		"""Close all resources"""
+		try:
+			# First close browser resources
+			if self.browser_context and not self.injected_browser_context:
+				await self.browser_context.close()
+			if self.browser and not self.injected_browser:
+				await self.browser.close()
+			
+			# Then cleanup httpx clients
+			await self.cleanup_httpx_clients()
+			
+			# Force garbage collection
+			gc.collect()
+			
+		except Exception as e:
+			logger.error(f"Error during cleanup: {e}")
