@@ -171,7 +171,22 @@ class MessageManager:
 	def get_messages(self) -> List[BaseMessage]:
 		"""Get current message list, potentially trimmed to max tokens"""
 
-		msg = [m.message for m in self.state.history.messages]
+		msgs = [m.message for m in self.state.history.messages]
+		# if last message is of same type, append to previous message
+		for i in range(len(msgs) - 1, 0, -1):
+			if type(msgs[i]) == type(msgs[i - 1]) and isinstance(msgs[i], HumanMessage):
+				content1 = msgs[i - 1].content 
+				content2 = msgs[i].content 
+				if isinstance(content1, list) and isinstance(content2, list):
+					content1.extend(content2)
+				elif isinstance(content1, str) and isinstance(content2, str):
+					msgs[i - 1].content += '\n' + content2
+				elif isinstance(content1, list) and isinstance(content2, str):
+					content1.append({'type': 'text', 'text': content2})
+				elif isinstance(content1, str) and isinstance(content2, list):
+					content1 = [{'type': 'text', 'text': content1}] + content2
+				msgs.pop(i)
+				msgs[i - 1] = HumanMessage(content=content1) # type: ignore
 		# debug which messages are in history with token count # log
 		total_input_tokens = 0
 		logger.debug(f'Messages in history: {len(self.state.history.messages)}:')
@@ -180,7 +195,7 @@ class MessageManager:
 			logger.debug(f'{m.message.__class__.__name__} - Token count: {m.metadata.tokens}')
 		logger.debug(f'Total input tokens: {total_input_tokens}')
 
-		return msg
+		return msgs
 
 	def _add_message_with_tokens(self, message: BaseMessage, position: int | None = None) -> None:
 		"""Add message with token count metadata
